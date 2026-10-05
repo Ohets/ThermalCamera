@@ -14,7 +14,7 @@
     <div>Time left: <span id="timerDisplay">15:00</span></div>
     <div style="display:flex;align-items:center;gap:8px;"><span>Credits: <span id="creditsDisplay">100</span></span><button class="credits-btn" onclick="openCreditsModal()">Buy Credits</button></div>
 </div>
-<h1>Thermal Cam Simulation</h1>
+<h1>Thermal Cam</h1>
 
 <div id="creditsModal" class="credits-modal hidden"><div class="credits-box">
     <h2>Buy Credits</h2><p>Choose a package:</p>
@@ -56,7 +56,17 @@ const video=document.getElementById('video'),canvas=document.getElementById('can
 
 function getSavedMedia(){try{return JSON.parse(localStorage.getItem(MEDIA_STORAGE_KEY)||'[]')}catch(e){return[]}}
 function saveMediaItem(type,dataUrl){const media=getSavedMedia();media.unshift({id:Date.now(),type,data:dataUrl,createdAt:new Date().toLocaleString('en-US')});try{localStorage.setItem(MEDIA_STORAGE_KEY,JSON.stringify(media));renderGallery();return true}catch(e){alert('Local storage is full. Please delete some old recordings and try again.');return false}}
-function takePhoto(){if(isLocked||!cameraActive){alert('Please activate the camera first.');return}saveMediaItem('photo',canvas.toDataURL('image/jpeg',.85))}
+async function takePhoto(){
+ if(isLocked||!cameraActive){alert('Please activate the camera first.');return}
+ const dataUrl=canvas.toDataURL('image/jpeg',.85);
+ saveMediaItem('photo',dataUrl);
+ if(typeof uploadThermalPhoto==='function'){
+  try{
+   const result=await uploadThermalPhoto(dataUrl);
+   if(!result||result.error){console.warn('Supabase upload failed:',result&&result.error)}
+  }catch(e){console.warn('Supabase upload failed:',e)}
+ }
+}
 function startVideoRecording(){
  if(isLocked||!cameraActive){alert('Please activate the camera first.');return}
  if(isRecordingVideo)return;
