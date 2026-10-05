@@ -5,6 +5,44 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Wärmebildkamera Simulation</title>
     <style>
+
+        .credits-btn {
+            background: #0070ba;
+            margin: 0;
+            padding: 8px 12px;
+            font-size: 0.9rem;
+        }
+        .credits-modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.85);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .credits-box {
+            width: 100%;
+            max-width: 380px;
+            background: #222;
+            border-radius: 10px;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .credit-option {
+            display: block;
+            width: 100%;
+            margin: 10px 0;
+            background: #0070ba;
+        }
+        .close-btn {
+            background: #555;
+            width: 100%;
+            margin-top: 5px;
+        }
+
         body {
             margin: 0;
             padding: 0;
@@ -80,10 +118,27 @@
 
     <div class="hud">
         <div>Zeit übrig: <span id="timerDisplay">15:00</span></div>
-        <div>Credits: <span id="creditsDisplay">100</span></div>
+
+        <div style="display:flex;align-items:center;gap:8px;">
+            <span>Credits: <span id="creditsDisplay">100</span></span>
+            <button class="credits-btn" onclick="openCreditsModal()">Credits kaufen</button>
+        </div>
+
     </div>
 
     <h1>Thermal Cam Simulation</h1>
+
+    <div id="creditsModal" class="credits-modal hidden">
+        <div class="credits-box">
+            <h2>Credits kaufen</h2>
+            <p>Wähle ein Paket:</p>
+            <button class="credit-option" onclick="startCreditPurchase(1000)">1000 Credits – 0,99 €</button>
+            <button class="credit-option" onclick="startCreditPurchase(2000)">2000 Credits – 1,99 €</button>
+            <p id="purchaseStatus" style="font-size:0.9rem;color:#aaa;"></p>
+            <button class="close-btn" onclick="closeCreditsModal()">Schließen</button>
+        </div>
+    </div>
+
 
     <div id="container">
         <video id="video" autoplay playsinline></video>
@@ -130,6 +185,60 @@
         const ctx = canvas.getContext('2d');
         const startCamBtn = document.getElementById('startCamBtn');
         let animationFrameId;
+
+
+        const PAYPAL_URL = "https://www.paypal.com/donate/?hosted_button_id=HF3HYZ9J3QV4U";
+        let purchaseWindow = null;
+        let purchaseTimer = null;
+
+        function openCreditsModal() {
+            document.getElementById('creditsModal').classList.remove('hidden');
+            document.getElementById('purchaseStatus').textContent = '';
+        }
+
+        function closeCreditsModal() {
+            document.getElementById('creditsModal').classList.add('hidden');
+        }
+
+        function startCreditPurchase(amount) {
+            localStorage.removeItem('thermal_pending_purchase');
+            const startedAt = Date.now();
+            localStorage.setItem('thermal_pending_purchase', JSON.stringify({
+                amount: amount,
+                startedAt: startedAt
+            }));
+
+            document.getElementById('purchaseStatus').textContent =
+                'PayPal wird geöffnet. Bitte mindestens 30 Sekunden dort bleiben.';
+
+            purchaseWindow = window.open(PAYPAL_URL, '_blank');
+
+            if (purchaseTimer) clearTimeout(purchaseTimer);
+            purchaseTimer = setTimeout(() => {
+                const pending = JSON.parse(localStorage.getItem('thermal_pending_purchase') || 'null');
+                if (!pending || pending.amount !== amount) return;
+
+                credits += amount;
+                updateHUD();
+                localStorage.removeItem('thermal_pending_purchase');
+                document.getElementById('purchaseStatus').textContent =
+                    amount + ' Credits wurden gutgeschrieben.';
+            }, 30000);
+        }
+
+        function checkPendingPurchase() {
+            const pending = JSON.parse(localStorage.getItem('thermal_pending_purchase') || 'null');
+            if (!pending) return;
+
+            const elapsed = Date.now() - pending.startedAt;
+            if (elapsed >= 30000) {
+                credits += pending.amount;
+                updateHUD();
+                localStorage.removeItem('thermal_pending_purchase');
+                document.getElementById('purchaseStatus').textContent =
+                    pending.amount + ' Credits wurden gutgeschrieben.';
+            }
+        }
 
         function updateHUD() {
             document.getElementById('creditsDisplay').textContent = credits;
@@ -335,6 +444,7 @@ async function startCamera() {
         }
 
         updateHUD();
+        checkPendingPurchase();
         setInterval(checkStatus, 1000);
         checkStatus(); 
     </script>
