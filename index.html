@@ -133,8 +133,8 @@ async function uploadBlobToSupabase(blob,mediaType,extension){
   const uploadResponse=await fetch(
    `${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(SUPABASE_BUCKET)}/${fileName}`,
    {method:'POST',headers:{
-    apikey:SUPABASE_PUBLISHABLE_KEY,
-    Authorization:`Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
+    apikey:SUPABASE_ANON_KEY,
+    Authorization:`Bearer ${SUPABASE_ANON_KEY}`,
     'Content-Type':blob.type||'application/octet-stream',
     'x-upsert':'false'
    },body:blob}
@@ -147,8 +147,8 @@ async function uploadBlobToSupabase(blob,mediaType,extension){
   const recordResponse=await fetch(`${SUPABASE_URL}/rest/v1/thermal_media`,{
    method:'POST',
    headers:{
-    apikey:SUPABASE_PUBLISHABLE_KEY,
-    Authorization:`Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
+    apikey:SUPABASE_ANON_KEY,
+    Authorization:`Bearer ${SUPABASE_ANON_KEY}`,
     'Content-Type':'application/json',
     Prefer:'return=minimal'
    },
