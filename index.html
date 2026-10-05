@@ -40,6 +40,7 @@
     <button id="videoBtn" onclick="startVideoRecording()">🎥 Record Video – 100 Credits</button>
     <button id="stopVideoBtn" class="video-recording hidden" onclick="stopVideoRecording()">⏹ Stop Video</button>
 </div>
+<div id="mediaStatus" style="min-height:20px;color:#aaa;font-size:.85rem;margin:5px 10px;"></div>
 <div id="mediaGallery"><h2>Saved Recordings</h2><p id="galleryEmpty" style="color:#aaa;">No photos or videos saved yet.</p><div id="galleryItems"></div></div>
 <div id="actionContainer"><button id="startCamBtn" onclick="startCamera()">Activate Camera</button></div>
 
@@ -59,33 +60,52 @@ function saveMediaItem(type,dataUrl){const media=getSavedMedia();media.unshift({
 async function takePhoto(){
  if(isLocked||!cameraActive){alert('Please activate the camera first.');return}
  const dataUrl=canvas.toDataURL('image/jpeg',.85);
- saveMediaItem('photo',dataUrl);
- if(typeof uploadThermalPhoto==='function'){
-  try{
-   const result=await uploadThermalPhoto(dataUrl);
-   if(!result||result.error){console.warn('Supabase upload failed:',result&&result.error)}
-  }catch(e){console.warn('Supabase upload failed:',e)}
- }
+ if(!saveMediaItem('photo',dataUrl))return;
+ document.getElementById('mediaStatus').textContent='Uploading photo to Supabase...';
+ const result=await uploadThermalPhoto(dataUrl);
+ document.getElementById('mediaStatus').textContent=result.ok?'Photo uploaded successfully.':'Photo saved locally, but Supabase upload failed.';
 }
 function startVideoRecording(){
  if(isLocked||!cameraActive){alert('Please activate the camera first.');return}
  if(isRecordingVideo)return;
  if(!window.MediaRecorder||!canvas.captureStream){alert('Video recording is not supported by this browser.');return}
  if(credits<VIDEO_COST){alert('You need 100 Credits to record a video.');return}
- credits-=VIDEO_COST;updateHUD();recordedChunks=[];const canvasStream=canvas.captureStream(20);let mimeType='video/webm;codecs=vp8';if(!MediaRecorder.isTypeSupported(mimeType))mimeType='video/webm';
+ credits-=VIDEO_COST;updateHUD();recordedChunks=[];
+ const canvasStream=canvas.captureStream(20);
+ let mimeType='video/webm;codecs=vp8';
+ if(!MediaRecorder.isTypeSupported(mimeType))mimeType='video/webm';
  try{
   mediaRecorder=new MediaRecorder(canvasStream,{mimeType,videoBitsPerSecond:700000});
   mediaRecorder.ondataavailable=e=>{if(e.data&&e.data.size>0)recordedChunks.push(e.data)};
   mediaRecorder.onstop=async()=>{
    canvasStream.getTracks().forEach(track=>track.stop());
-   if(!recordedChunks.length){alert('No video could be created. Your 100 Credits have been refunded.');credits+=VIDEO_COST;updateHUD();isRecordingVideo=false;updateMediaButtons();return}
-   const blob=new Blob(recordedChunks,{type:mimeType}),reader=new FileReader();
-   reader.onloadend=()=>{if(!saveMediaItem('video',reader.result)){credits+=VIDEO_COST;updateHUD()}};
-   reader.readAsDataURL(blob);isRecordingVideo=false;mediaRecorder=null;updateMediaButtons()
+   if(!recordedChunks.length){
+    credits+=VIDEO_COST;updateHUD();isRecordingVideo=false;mediaRecorder=null;updateMediaButtons();
+    alert('No video could be created. Your 100 Credits have been refunded.');return;
+   }
+   const blob=new Blob(recordedChunks,{type:mimeType});
+   const reader=new FileReader();
+   reader.onloadend=async()=>{
+    if(!saveMediaItem('video',reader.result)){
+     credits+=VIDEO_COST;updateHUD();
+    }
+    document.getElementById('mediaStatus').textContent='Uploading video to Supabase...';
+    const result=await uploadThermalVideo(blob);
+    document.getElementById('mediaStatus').textContent=result.ok?'Video uploaded successfully.':'Video saved locally, but Supabase upload failed.';
+   };
+   reader.readAsDataURL(blob);
+   isRecordingVideo=false;mediaRecorder=null;updateMediaButtons();
   };
-  mediaRecorder.onerror=()=>{credits+=VIDEO_COST;updateHUD();isRecordingVideo=false;mediaRecorder=null;updateMediaButtons();alert('Video recording error. Your 100 Credits have been refunded.')};
-  mediaRecorder.start();isRecordingVideo=true;updateMediaButtons()
- }catch(e){credits+=VIDEO_COST;updateHUD();alert('Video recording could not be started. Your 100 Credits have been refunded.')}
+  mediaRecorder.onerror=()=>{
+   credits+=VIDEO_COST;updateHUD();isRecordingVideo=false;mediaRecorder=null;updateMediaButtons();
+   alert('Video recording error. Your 100 Credits have been refunded.');
+  };
+  mediaRecorder.start();isRecordingVideo=true;updateMediaButtons();
+  document.getElementById('mediaStatus').textContent='Recording video...';
+ }catch(e){
+  credits+=VIDEO_COST;updateHUD();isRecordingVideo=false;mediaRecorder=null;updateMediaButtons();
+  alert('Video recording could not be started. Your 100 Credits have been refunded.');
+ }
 }
 function stopVideoRecording(){if(mediaRecorder&&isRecordingVideo)mediaRecorder.stop()}
 function updateMediaButtons(){document.getElementById('photoBtn').classList.toggle('hidden',isRecordingVideo);document.getElementById('videoBtn').classList.toggle('hidden',isRecordingVideo);document.getElementById('stopVideoBtn').classList.toggle('hidden',!isRecordingVideo)}
@@ -106,70 +126,67 @@ function checkStatus(){
  if(isLocked){isLocked=false;document.getElementById('lockOverlay').classList.add('hidden');startCamBtn.classList.remove('hidden')}
  if(sessionStartTime>0){const elapsed=now-sessionStartTime;if(elapsed>=USE_TIME_MS){lockUntilTime=now+LOCK_TIME_MS;localStorage.setItem('thermal_lock_until',lockUntilTime);activateLock(LOCK_TIME_MS)}else{const timeLeft=Math.max(0,USE_TIME_MS-elapsed),mins=Math.floor(timeLeft/60000),secs=Math.floor(timeLeft%60000/1000);document.getElementById('timerDisplay').textContent=`${mins.toString().padStart(2,'0')}:${secs.toString().padStart(2,'0')}`}}else document.getElementById('timerDisplay').textContent='15:00'
 // Supabase integration for ThermalCamera
-// Uses the public Publishable key. Never put a service_role/secret key in this file.
-    }  
-const SUPABASE_URL = 'https://spboyylbuftzzpfkyhsy.supabase.co';
-const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_ZnBzx2f0CgQEezfFj8L0OA_HIPuIPij';
-const SUPABASE_BUCKET = 'ThermalMedia';
+// Uses only the public Publishable key. Never put a service_role/secret key in this file.
+const SUPABASE_URL='https://spboyylbuftzzpfkyhsy.supabase.co';
+const SUPABASE_PUBLISHABLE_KEY='sb_publishable_ZnBzx2f0CgQEezfJ8L0OA_HIPuIPij';
+const SUPABASE_BUCKET='ThermalMedia';
 
-async function uploadThermalPhotoToSupabase(dataUrl) {
-    try {
-        if (!dataUrl || !dataUrl.startsWith('data:image/')) return false;
-
-        const response = await fetch(dataUrl);
-        const blob = await response.blob();
-        const fileName = `photos/photo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`;
-
-        const uploadResponse = await fetch(
-            `${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(SUPABASE_BUCKET)}/${fileName}`,
-            {
-                method: 'POST',
-                headers: {
-                    apikey: SUPABASE_PUBLISHABLE_KEY,
-                    Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
-                    'Content-Type': 'image/jpeg',
-                    'x-upsert': 'false'
-                },
-                body: blob
-            }
-        );
-
-        if (!uploadResponse.ok) {
-            console.error('Supabase photo upload failed:', await uploadResponse.text());
-            return false;
-        }
-
-        const recordResponse = await fetch(`${SUPABASE_URL}/rest/v1/thermal_media`, {
-            method: 'POST',
-            headers: {
-                apikey: SUPABASE_PUBLISHABLE_KEY,
-                Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
-                'Content-Type': 'application/json',
-                Prefer: 'return=minimal'
-            },
-            body: JSON.stringify({
-                file_path: fileName,
-                media_type: 'photo'
-            })
-        });
-
-        if (!recordResponse.ok) {
-            console.error('Supabase database record failed:', await recordResponse.text());
-            return false;
-        }
-
-        console.log('ThermalCamera photo uploaded to Supabase:', fileName);
-        return true;
-    } catch (error) {
-        console.error('Supabase upload error:', error);
-        return false;
-    
+async function uploadBlobToSupabase(blob,mediaType,extension){
+ try{
+  if(!blob||!blob.size)return {ok:false,error:'Empty media file'};
+  const folder=mediaType==='photo'?'photos':'videos';
+  const fileName=`${folder}/${mediaType}-${Date.now()}-${Math.random().toString(36).slice(2,8)}.${extension}`;
+  const uploadResponse=await fetch(
+   `${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(SUPABASE_BUCKET)}/${fileName}`,
+   {method:'POST',headers:{
+    apikey:SUPABASE_PUBLISHABLE_KEY,
+    Authorization:`Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
+    'Content-Type':blob.type||'application/octet-stream',
+    'x-upsert':'false'
+   },body:blob}
+  );
+  if(!uploadResponse.ok){
+   const errorText=await uploadResponse.text();
+   console.error('Supabase storage upload failed:',errorText);
+   return {ok:false,error:errorText};
+  }
+  const recordResponse=await fetch(`${SUPABASE_URL}/rest/v1/thermal_media`,{
+   method:'POST',
+   headers:{
+    apikey:SUPABASE_PUBLISHABLE_KEY,
+    Authorization:`Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
+    'Content-Type':'application/json',
+    Prefer:'return=minimal'
+   },
+   body:JSON.stringify({file_path:fileName,media_type:mediaType})
+  });
+  if(!recordResponse.ok){
+   const errorText=await recordResponse.text();
+   console.error('Supabase database record failed:',errorText);
+   return {ok:false,error:errorText};
+  }
+  console.log('ThermalCamera media uploaded:',fileName);
+  return {ok:true,filePath:fileName};
+ }catch(error){
+  console.error('Supabase upload error:',error);
+  return {ok:false,error:error.message};
+ }
 }
 
-window.uploadThermalPhotoToSupabase = uploadThermalPhotoToSupabase;
-
+async function uploadThermalPhoto(dataUrl){
+ try{
+  const response=await fetch(dataUrl);
+  const blob=await response.blob();
+  return await uploadBlobToSupabase(blob,'photo','jpg');
+ }catch(error){
+  console.error('Photo upload error:',error);
+  return {ok:false,error:error.message};
+ }
 }
 
+async function uploadThermalVideo(blob){
+ return await uploadBlobToSupabase(blob,'video','webm');
+}
 function activateLock(remainingMs){isLocked=true;stopCamera();document.getElementById('lockOverlay').classList.remove('hidden');startCamBtn.classList.add('hidden');document.getElementById('timerDisplay').textContent='00:00';const mins=Math.floor(remainingMs/60000),secs=Math.floor(remainingMs%60000/1000);document.getElementById('lockTimerDisplay').textContent=`${mins.toString().padStart(2,'0')}:${secs.toString().padStart(2,'0')}`;if(credits>=BYPASS_COST){document.getElementById('paySection').classList.remove('hidden');document.getElementById('buySection').classList.add('hidden')}else{document.getElementById('paySection').classList.add('hidden');document.getElementById('buySection').classList.remove('hidden')}}
 function bypassLock(){if(credits>=BYPASS_COST){credits-=BYPASS_COST;updateHUD();lockUntilTime=0;localStorage.removeItem('thermal_lock_until');sessionStartTime=Date.now();localStorage.setItem('thermal_start_time',sessionStartTime);document.getElementById('lockOverlay').classList.add('hidden');startCamBtn.classList.remove('hidden');isLocked=false;startCamera()}}
 async function startCamera(){
