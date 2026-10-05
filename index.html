@@ -107,7 +107,7 @@ function checkStatus(){
  if(sessionStartTime>0){const elapsed=now-sessionStartTime;if(elapsed>=USE_TIME_MS){lockUntilTime=now+LOCK_TIME_MS;localStorage.setItem('thermal_lock_until',lockUntilTime);activateLock(LOCK_TIME_MS)}else{const timeLeft=Math.max(0,USE_TIME_MS-elapsed),mins=Math.floor(timeLeft/60000),secs=Math.floor(timeLeft%60000/1000);document.getElementById('timerDisplay').textContent=`${mins.toString().padStart(2,'0')}:${secs.toString().padStart(2,'0')}`}}else document.getElementById('timerDisplay').textContent='15:00'
 // Supabase integration for ThermalCamera
 // Uses the public Publishable key. Never put a service_role/secret key in this file.
-    {
+    
 const SUPABASE_URL = 'https://spboyylbuftzzpfkyhsy.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_ZnBzx2f0CgQEezfFj8L0OA_HIPuIPij';
 const SUPABASE_BUCKET = 'ThermalMedia';
