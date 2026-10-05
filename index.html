@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wärmebildkamera Simulation</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #121212;
+            color: #ffffff;
+            font-family: Arial, sans-serif;
+            text-align: center;
+            overflow-x: hidden;
+        }
+        h1 { font-size: 1.5rem; margin: 10px 0; color: #ff5500; }
+        .hud {
+            display: flex;
+            justify-content: space-around;
+            background: #222;
+            padding: 10px;
+            font-size: 1rem;
+            font-weight: bold;
+        }
+        #container {
+            position: relative;
+            width: 100%;
+            max-width: 500px;
+            margin: 10px auto;
+            aspect-ratio: 3/4;
+            background: #000;
+        }
+        video { display: none; }
+        canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        .overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            box-sizing: border-box;
+            z-index: 10;
+        }
+        .hidden { display: none !important; }
+        button {
+            background: #ff5500;
+            color: white;
+            border: none;
+            padding: 14px 28px;
+            font-size: 1.1rem;
+            font-weight: bold;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 15px auto;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        button:active { background: #e04a00; }
+        #actionContainer {
+            margin-top: 10px;
+        }
+        .paypal-link {
+            color: #00aaff;
+            text-decoration: none;
+            font-weight: bold;
+            margin-top: 15px;
+            word-break: break-all;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="hud">
+        <div>Zeit übrig: <span id="timerDisplay">15:00</span></div>
+        <div>Credits: <span id="creditsDisplay">100</span></div>
+    </div>
+
+    <h1>Thermal Cam Simulation</h1>
+
+    <div id="container">
+        <video id="video" autoplay playsinline></video>
+        <canvas id="canvas"></canvas>
+
+        <!-- Sperr-Overlay -->
+        <div id="lockOverlay" class="overlay hidden">
+            <h2>App gesperrt!</h2>
+            <p>Die 15 Minuten Nutzungszeit sind abgelaufen.</p>
+            <p>Verbleibende Sperrzeit: <span id="lockTimerDisplay">60:00</span></p>
+            
+            <div id="paySection">
+                <p>Zahle 50 Credits, um sofort weiterzumachen:</p>
+                <button id="bypassBtn" onclick="bypassLock()">Mit 50 Credits freischalten</button>
+            </div>
+            
+            <div id="buySection" class="hidden">
+                <p style="color: #ff3333; font-weight: bold;">Nicht genügend Credits vorhanden!</p>
+                <p>Hier kannst du neue Credits erwerben:</p>
+                <a class="paypal-link" href="https://www.paypal.com/donate/?hosted_button_id=HF3HYZ9J3QV4U" target="_blank">Credits via PayPal kaufen</a>
+                <p style="font-size: 0.8rem; color: #aaa; margin-top: 10px;">Hinweis: Nach dem Kauf die App neu laden.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Container für den Aktivierungs-Button -->
+    <div id="actionContainer">
+        <button id="startCamBtn" onclick="startCamera()">Kamera aktivieren</button>
+    </div>
+
+    <script>
+        const USE_TIME_MS = 15 * 60 * 1000; // 15 Minuten Nutzungszeit
+        const LOCK_TIME_MS = 60 * 60 * 1000; // 1 Stunde Sperre
+        const BYPASS_COST = 50;
+
+        let credits = parseInt(localStorage.getItem('thermal_credits')) || 100;
+        let sessionStartTime = parseInt(localStorage.getItem('thermal_start_time')) || 0;
+        let lockUntilTime = parseInt(localStorage.getItem('thermal_lock_until')) || 0;
+        let isLocked = false;
+        let cameraActive = false;
+
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const startCamBtn = document.getElementById('startCamBtn');
+        let animationFrameId;
+
+        function updateHUD() {
+            document.getElementById('creditsDisplay').textContent = credits;
+            localStorage.setItem('thermal_credits', credits);
+        }
+
+        function checkStatus() {
+            const now = Date.now();
+
+            // Falls aktuell eine stündliche Sperre aktiv ist
+            if (now < lockUntilTime) {
+                activateLock(lockUntilTime - now);
+                return;
+            }
+
+            // Falls die Sperre abgelaufen ist
+            if (lockUntilTime > 0 && now >= lockUntilTime) {
+                lockUntilTime = 0;
+                localStorage.removeItem('thermal_lock_until');
+                sessionStartTime = 0;
+                localStorage.removeItem('thermal_start_time');
+            }
+
+            // Wenn gesperrt war und nun frei ist, UI zurücksetzen
+            if (isLocked) {
+                isLocked = false;
+                document.getElementById('lockOverlay').classList.add('hidden');
+                startCamBtn.classList.remove('hidden');
+            }
+
+            // Zeitberechnung für die aktive Session (läuft nur, wenn Kamera aktiv ist)
+            if (sessionStartTime > 0) {
+                const elapsed = now - sessionStartTime;
+
+                if (elapsed >= USE_TIME_MS) {
+                    lockUntilTime = now + LOCK_TIME_MS;
+                    localStorage.setItem('thermal_lock_until', lockUntilTime);
+                    activateLock(LOCK_TIME_MS);
+                } else {
+                    let timeLeft = Math.max(0, USE_TIME_MS - elapsed);
+                    let mins = Math.floor(timeLeft / 60000);
+                    let secs = Math.floor((timeLeft % 60000) / 1000);
+                    document.getElementById('timerDisplay').textContent = 
+                        `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+                }
+            } else {
+                document.getElementById('timerDisplay').textContent = "15:00";
+            }
+        }
+
+        function activateLock(remainingMs) {
+            isLocked = true;
+            stopCamera();
+            document.getElementById('lockOverlay').classList.remove('hidden');
+            startCamBtn.classList.add('hidden'); // Verstecke den Aktivierungsbutton bei Sperre
+            document.getElementById('timerDisplay').textContent = "00:00";
+
+            let mins = Math.floor(remainingMs / 60000);
+            let secs = Math.floor((remainingMs % 60000) / 1000);
+            document.getElementById('lockTimerDisplay').textContent = 
+                `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+
+            if (credits >= BYPASS_COST) {
+                document.getElementById('paySection').classList.remove('hidden');
+                document.getElementById('buySection').classList.add('hidden');
+            } else {
+                document.getElementById('paySection').classList.add('hidden');
+                document.getElementById('buySection').classList.remove('hidden');
+            }
+        }
+
+        function bypassLock() {
+            if (credits >= BYPASS_COST) {
+                credits -= BYPASS_COST;
+                updateHUD();
+                
+                lockUntilTime = 0;
+                localStorage.removeItem('thermal_lock_until');
+                sessionStartTime = Date.now();
+                localStorage.setItem('thermal_start_time', sessionStartTime);
+                
+                document.getElementById('lockOverlay').classList.add('hidden');
+                startCamBtn.classList.remove('hidden');
+                isLocked = false;
+                startCamera();
+            }
+        }
+
+     // Diagnose-Funktion für Kamera-Zugriff
+async function startCamera() {
+    if (isLocked || cameraActive) return;
+    
+    // START DER DIAGNOSE
+    let infoText = "--- DIAGNOSE-START ---\n";
+    infoText += "Protokoll: " + window.location.protocol + "\n";
+    infoText += "Secure Context: " + (window.isSecureContext ? "JA" : "NEIN") + "\n";
+
+    try {
+        // 1. Prüfen, ob die Medien-Schnittstelle existiert
+        if (!navigator.mediaDevices) {
+            alert(infoText + "FEHLER: navigator.mediaDevices ist komplett blockiert oder existiert nicht im App-Container.");
+            return;
+        }
+
+        // 2. Verfügbare Hardware-Geräte auflisten
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(device => device.kind === 'videoinput');
+        
+        infoText += "Gefundene Kameras: " + videoDevices.length + "\n";
+        videoDevices.forEach((dev, index) => {
+            infoText += `[${index}] ID: ${dev.deviceId.substring(0,5)}... Name: ${dev.label || "Unbekannt (Berechtigung fehlt)"}\n`;
+        });
+
+        if (videoDevices.length === 0) {
+            alert(infoText + "FEHLER: Es wurden keine Kameras vom App-Container erkannt!");
+            return;
+        }
+
+        // 3. Wenn Kameras gefunden wurden, versuchen wir den Stream zu starten
+        alert(infoText + "\nKameras erkannt! Versuche Stream zu starten...");
+
+        const constraints = {
+            video: { facingMode: "environment" },
+            audio: false
+        };
+
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject = stream;
+        
+        if (sessionStartTime === 0) {
+            sessionStartTime = Date.now();
+            localStorage.setItem('thermal_start_time', sessionStartTime);
+        }
+
+        video.addEventListener('loadedmetadata', () => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            cameraActive = true;
+            startCamBtn.classList.add('hidden');
+            requestAnimationFrame(processFrame);
+        });
+
+    } catch (err) {
+        alert(infoText + "\nABSTURZ BEIM ZUGRIFF:\nName: " + err.name + "\nNachricht: " + err.message);
+        console.error("Kamerafehler: ", err);
+    }
+}
+
+
+            
+        
+
+        
+
+        function stopCamera() {
+            if (video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+                video.srcObject = null;
+            }
+            cancelAnimationFrame(animationFrameId);
+            cameraActive = false;
+            if (!isLocked) {
+                startCamBtn.classList.remove('hidden');
+            }
+        }
+
+        // Wärmebild-Matrixfilter
+        function processFrame() {
+            if (isLocked || !cameraActive) return;
+
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            let frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            let data = frame.data;
+
+            for (let i = 0; i < data.length; i += 4) {
+                let r = data[i];
+                let g = data[i + 1];
+                let b = data[i + 2];
+
+                let v = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+                if (v < 64) {
+                    data[i] = 0;
+                    data[i + 1] = 0;
+                    data[i + 2] = v * 4;
+                } else if (v < 128) {
+                    data[i] = 0;
+                    data[i + 1] = (v - 64) * 4;
+                    data[i + 2] = 255;
+                } else if (v < 192) {
+                    data[i] = (v - 128) * 4;
+                    data[i + 1] = 255;
+                    data[i + 2] = 255 - (v - 128) * 4;
+                } else {
+                    data[i] = 255;
+                    data[i + 1] = 255 - (v - 192) * 4;
+                    data[i + 2] = 0;
+                }
+            }
+
+            ctx.putImageData(frame, 0, 0);
+            animationFrameId = requestAnimationFrame(processFrame);
+        }
+
+        updateHUD();
+        setInterval(checkStatus, 1000);
+        checkStatus(); 
+    </script>
+</body>
+</html>
