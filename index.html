@@ -43,6 +43,53 @@
             margin-top: 5px;
         }
 
+
+        .media-controls {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 8px;
+            margin: 10px auto;
+            max-width: 500px;
+        }
+        .media-controls button {
+            margin: 5px;
+            padding: 10px 14px;
+            font-size: 0.95rem;
+        }
+        .video-recording {
+            background: #cc0000 !important;
+        }
+        #mediaGallery {
+            max-width: 500px;
+            margin: 15px auto 30px;
+            padding: 10px;
+        }
+        .media-item {
+            background: #222;
+            border-radius: 8px;
+            padding: 10px;
+            margin: 10px 0;
+        }
+        .media-item img, .media-item video {
+            width: 100%;
+            max-height: 350px;
+            object-fit: contain;
+            background: #000;
+            border-radius: 5px;
+        }
+        .media-actions {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .media-actions button {
+            margin: 6px;
+            padding: 8px 12px;
+            font-size: 0.9rem;
+        }
+
         body {
             margin: 0;
             padding: 0;
@@ -164,6 +211,19 @@
         </div>
     </div>
 
+
+    <div class="media-controls">
+        <button id="photoBtn" onclick="takePhoto()">📸 Foto aufnehmen – kostenlos</button>
+        <button id="videoBtn" onclick="startVideoRecording()">🎥 Video aufnehmen – 100 Credits</button>
+        <button id="stopVideoBtn" class="video-recording hidden" onclick="stopVideoRecording()">⏹ Video stoppen</button>
+    </div>
+
+    <div id="mediaGallery">
+        <h2>Gespeicherte Aufnahmen</h2>
+        <p id="galleryEmpty" style="color:#aaa;">Noch keine Fotos oder Videos gespeichert.</p>
+        <div id="galleryItems"></div>
+    </div>
+
     <!-- Container für den Aktivierungs-Button -->
     <div id="actionContainer">
         <button id="startCamBtn" onclick="startCamera()">Kamera aktivieren</button>
@@ -185,6 +245,204 @@
         const ctx = canvas.getContext('2d');
         const startCamBtn = document.getElementById('startCamBtn');
         let animationFrameId;
+
+
+
+        const VIDEO_COST = 100;
+        const MEDIA_STORAGE_KEY = 'thermal_media';
+        let mediaRecorder = null;
+        let recordedChunks = [];
+        let isRecordingVideo = false;
+
+        function getSavedMedia() {
+            try {
+                return JSON.parse(localStorage.getItem(MEDIA_STORAGE_KEY) || '[]');
+            } catch (e) {
+                return [];
+            }
+        }
+
+        function saveMediaItem(type, dataUrl) {
+            const media = getSavedMedia();
+            media.unshift({
+                id: Date.now(),
+                type: type,
+                data: dataUrl,
+                createdAt: new Date().toLocaleString('de-DE')
+            });
+
+            try {
+                localStorage.setItem(MEDIA_STORAGE_KEY, JSON.stringify(media));
+                renderGallery();
+                return true;
+            } catch (e) {
+                alert('Der lokale Speicher ist voll. Bitte lösche einige alte Aufnahmen und versuche es erneut.');
+                return false;
+            }
+        }
+
+        function takePhoto() {
+            if (isLocked || !cameraActive) {
+                alert('Bitte aktiviere zuerst die Kamera.');
+                return;
+            }
+
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+            saveMediaItem('photo', dataUrl);
+        }
+
+        function startVideoRecording() {
+            if (isLocked || !cameraActive) {
+                alert('Bitte aktiviere zuerst die Kamera.');
+                return;
+            }
+
+            if (isRecordingVideo) return;
+
+            if (!window.MediaRecorder || !canvas.captureStream) {
+                alert('Videoaufnahme wird von diesem Browser nicht unterstützt.');
+                return;
+            }
+
+            if (credits < VIDEO_COST) {
+                alert('Du benötigst 100 Credits für eine Videoaufnahme.');
+                return;
+            }
+
+            credits -= VIDEO_COST;
+            updateHUD();
+
+            recordedChunks = [];
+            const canvasStream = canvas.captureStream(20);
+            let mimeType = 'video/webm;codecs=vp8';
+            if (!MediaRecorder.isTypeSupported(mimeType)) {
+                mimeType = 'video/webm';
+            }
+
+            try {
+                mediaRecorder = new MediaRecorder(canvasStream, {
+                    mimeType: mimeType,
+                    videoBitsPerSecond: 700000
+                });
+
+                mediaRecorder.ondataavailable = event => {
+                    if (event.data && event.data.size > 0) {
+                        recordedChunks.push(event.data);
+                    }
+                };
+
+                mediaRecorder.onstop = async () => {
+                    canvasStream.getTracks().forEach(track => track.stop());
+
+                    if (!recordedChunks.length) {
+                        alert('Es konnte kein Video erstellt werden. Die 100 Credits wurden zurückerstattet.');
+                        credits += VIDEO_COST;
+                        updateHUD();
+                        isRecordingVideo = false;
+                        updateMediaButtons();
+                        return;
+                    }
+
+                    const blob = new Blob(recordedChunks, { type: mimeType });
+                    const reader = new FileReader();
+
+                    reader.onloadend = () => {
+                        const saved = saveMediaItem('video', reader.result);
+                        if (!saved) {
+                            credits += VIDEO_COST;
+                            updateHUD();
+                        }
+                    };
+
+                    reader.readAsDataURL(blob);
+                    isRecordingVideo = false;
+                    mediaRecorder = null;
+                    updateMediaButtons();
+                };
+
+                mediaRecorder.onerror = () => {
+                    credits += VIDEO_COST;
+                    updateHUD();
+                    isRecordingVideo = false;
+                    mediaRecorder = null;
+                    updateMediaButtons();
+                    alert('Fehler bei der Videoaufnahme. Die 100 Credits wurden zurückerstattet.');
+                };
+
+                mediaRecorder.start();
+                isRecordingVideo = true;
+                updateMediaButtons();
+            } catch (e) {
+                credits += VIDEO_COST;
+                updateHUD();
+                alert('Videoaufnahme konnte nicht gestartet werden. Die 100 Credits wurden zurückerstattet.');
+            }
+        }
+
+        function stopVideoRecording() {
+            if (mediaRecorder && isRecordingVideo) {
+                mediaRecorder.stop();
+            }
+        }
+
+        function updateMediaButtons() {
+            document.getElementById('photoBtn').classList.toggle('hidden', isRecordingVideo);
+            document.getElementById('videoBtn').classList.toggle('hidden', isRecordingVideo);
+            document.getElementById('stopVideoBtn').classList.toggle('hidden', !isRecordingVideo);
+        }
+
+        function renderGallery() {
+            const gallery = document.getElementById('galleryItems');
+            const empty = document.getElementById('galleryEmpty');
+            const media = getSavedMedia();
+
+            gallery.innerHTML = '';
+            empty.classList.toggle('hidden', media.length > 0);
+
+            media.forEach(item => {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'media-item';
+
+                const title = document.createElement('p');
+                title.textContent = (item.type === 'photo' ? '📸 Foto' : '🎥 Video') + ' – ' + item.createdAt;
+                wrapper.appendChild(title);
+
+                const element = document.createElement(item.type === 'photo' ? 'img' : 'video');
+                element.src = item.data;
+                if (item.type === 'video') {
+                    element.controls = true;
+                    element.playsInline = true;
+                }
+                wrapper.appendChild(element);
+
+                const actions = document.createElement('div');
+                actions.className = 'media-actions';
+
+                const downloadBtn = document.createElement('button');
+                downloadBtn.textContent = '⬇ Speichern';
+                downloadBtn.onclick = () => {
+                    const a = document.createElement('a');
+                    a.href = item.data;
+                    a.download = item.type === 'photo'
+                        ? 'thermal-foto-' + item.id + '.jpg'
+                        : 'thermal-video-' + item.id + '.webm';
+                    a.click();
+                };
+                actions.appendChild(downloadBtn);
+
+                const deleteBtn = document.createElement('button');
+                deleteBtn.textContent = '🗑 Löschen';
+                deleteBtn.onclick = () => {
+                    const updated = getSavedMedia().filter(saved => saved.id !== item.id);
+                    localStorage.setItem(MEDIA_STORAGE_KEY, JSON.stringify(updated));
+                    renderGallery();
+                };
+                actions.appendChild(deleteBtn);
+
+                wrapper.appendChild(actions);
+                gallery.appendChild(wrapper);
+            });
+        }
 
 
         const PAYPAL_URL = "https://www.paypal.com/donate/?hosted_button_id=HF3HYZ9J3QV4U";
@@ -444,6 +702,8 @@ async function startCamera() {
         }
 
         updateHUD();
+        updateMediaButtons();
+        renderGallery();
         checkPendingPurchase();
         setInterval(checkStatus, 1000);
         checkStatus(); 
