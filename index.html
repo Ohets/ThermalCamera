@@ -63,7 +63,7 @@ async function takePhoto(){
  if(!saveMediaItem('photo',dataUrl))return;
  document.getElementById('mediaStatus').textContent='Uploading photo to Supabase...';
  const result=await uploadThermalPhoto(dataUrl);
- document.getElementById('mediaStatus').textContent=result.ok?'Photo uploaded successfully.':'Photo saved locally, but Supabase upload failed.';
+ document.getElementById('mediaStatus').textContent=result.ok?'Photo uploaded successfully.':'Supabase upload failed: '+(result.error||'Unknown error');
 }
 function startVideoRecording(){
  if(isLocked||!cameraActive){alert('Please activate the camera first.');return}
@@ -91,7 +91,7 @@ function startVideoRecording(){
     }
     document.getElementById('mediaStatus').textContent='Uploading video to Supabase...';
     const result=await uploadThermalVideo(blob);
-    document.getElementById('mediaStatus').textContent=result.ok?'Video uploaded successfully.':'Video saved locally, but Supabase upload failed.';
+    document.getElementById('mediaStatus').textContent=result.ok?'Video uploaded successfully.':'Supabase upload failed: '+(result.error||'Unknown error');
    };
    reader.readAsDataURL(blob);
    isRecordingVideo=false;mediaRecorder=null;updateMediaButtons();
